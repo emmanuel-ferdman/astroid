@@ -2,6 +2,7 @@ name: Test pylint
 
 on:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test-pylint-with-astroid-sha:
