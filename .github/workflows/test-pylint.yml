@@ -5,7 +5,7 @@ on:
 
 jobs:
   test-pylint-with-astroid-sha:
-    uses: pylint-dev/pylint/.github/workflows/tests.yaml@main
+    uses: emmanuel-ferdman/pylint/.github/workflows/tests.yaml@main
     with:
-      repository: pylint-dev/pylint
+      repository: emmanuel-ferdman/pylint
       astroid_sha: ${{ github.sha }}
