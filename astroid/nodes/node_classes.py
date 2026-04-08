@@ -597,9 +597,6 @@ class Name(_base_nodes.LookupMixIn, _base_nodes.NoChildrenNode):
         return _infer_stmts(stmts, context, frame)
 
 
-DEPRECATED_ARGUMENT_DEFAULT = "DEPRECATED_ARGUMENT_DEFAULT"
-
-
 class Arguments(
     _base_nodes.AssignTypeNode
 ):  # pylint: disable=too-many-instance-attributes
@@ -969,7 +966,7 @@ class Arguments(
             return True
         return self.find_argname(name)[1] is not None
 
-    def find_argname(self, argname, rec=DEPRECATED_ARGUMENT_DEFAULT):
+    def find_argname(self, argname):
         """Get the index and :class:`AssignName` node for given name.
 
         :param argname: The name of the argument to search for.
@@ -978,12 +975,6 @@ class Arguments(
         :returns: The index and node for the argument.
         :rtype: tuple(str or None, AssignName or None)
         """
-        if rec != DEPRECATED_ARGUMENT_DEFAULT:  # pragma: no cover
-            warnings.warn(
-                "The rec argument will be removed in astroid 3.1.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if self.arguments:
             index, argument = _find_arg(argname, self.arguments)
             if argument:
@@ -3061,20 +3052,6 @@ class If(_base_nodes.MultiLineWithElseBlockNode, _base_nodes.Statement):
         """
         return self.test.tolineno
 
-    def block_range(self, lineno: int) -> tuple[int, int]:
-        """Get a range from the given line number to where this node ends.
-
-        :param lineno: The line number to start the range at.
-
-        :returns: The range of line numbers that this node belongs to,
-            starting at the given line number.
-        """
-        if lineno == self.body[0].fromlineno:
-            return lineno, lineno
-        if lineno <= self.body[-1].tolineno:
-            return lineno, self.body[-1].tolineno
-        return self._elsed_block_range(lineno, self.orelse, self.body[0].fromlineno - 1)
-
     def get_children(self):
         yield self.test
 
@@ -3915,27 +3892,20 @@ class Try(_base_nodes.MultiLineWithElseBlockNode, _base_nodes.Statement):
 
     def block_range(self, lineno: int) -> tuple[int, int]:
         """Get a range from a given line number to where this node ends."""
-        if lineno == self.fromlineno:
-            return lineno, lineno
-        if self.body and self.body[0].fromlineno <= lineno <= self.body[-1].tolineno:
-            # Inside try body - return from lineno till end of try body
-            return lineno, self.body[-1].tolineno
         for exhandler in self.handlers:
             if exhandler.type and lineno == exhandler.type.fromlineno:
-                return lineno, lineno
+                return lineno, exhandler.tolineno
             if exhandler.body[0].fromlineno <= lineno <= exhandler.body[-1].tolineno:
                 return lineno, exhandler.body[-1].tolineno
-        if self.orelse:
-            if self.orelse[0].fromlineno - 1 == lineno:
-                return lineno, lineno
-            if self.orelse[0].fromlineno <= lineno <= self.orelse[-1].tolineno:
-                return lineno, self.orelse[-1].tolineno
         if self.finalbody:
             if self.finalbody[0].fromlineno - 1 == lineno:
-                return lineno, lineno
+                return lineno, self.finalbody[0].tolineno
             if self.finalbody[0].fromlineno <= lineno <= self.finalbody[-1].tolineno:
                 return lineno, self.finalbody[-1].tolineno
-        return lineno, self.tolineno
+
+        # If not within any of the ExceptHandlers or `finally` body, fall back to regular
+        # handling of block_range for nodes with a potential `else` statement.
+        return super().block_range(lineno)
 
     def get_children(self):
         yield from self.body
@@ -4014,35 +3984,28 @@ class TryStar(_base_nodes.MultiLineWithElseBlockNode, _base_nodes.Statement):
     def _infer_name(self, frame, name):
         return name
 
-    def block_range(self, lineno: int) -> tuple[int, int]:
-        """Get a range from a given line number to where this node ends."""
-        if lineno == self.fromlineno:
-            return lineno, lineno
-        if self.body and self.body[0].fromlineno <= lineno <= self.body[-1].tolineno:
-            # Inside try body - return from lineno till end of try body
-            return lineno, self.body[-1].tolineno
-        for exhandler in self.handlers:
-            if exhandler.type and lineno == exhandler.type.fromlineno:
-                return lineno, lineno
-            if exhandler.body[0].fromlineno <= lineno <= exhandler.body[-1].tolineno:
-                return lineno, exhandler.body[-1].tolineno
-        if self.orelse:
-            if self.orelse[0].fromlineno - 1 == lineno:
-                return lineno, lineno
-            if self.orelse[0].fromlineno <= lineno <= self.orelse[-1].tolineno:
-                return lineno, self.orelse[-1].tolineno
-        if self.finalbody:
-            if self.finalbody[0].fromlineno - 1 == lineno:
-                return lineno, lineno
-            if self.finalbody[0].fromlineno <= lineno <= self.finalbody[-1].tolineno:
-                return lineno, self.finalbody[-1].tolineno
-        return lineno, self.tolineno
-
     def get_children(self):
         yield from self.body
         yield from self.handlers
         yield from self.orelse
         yield from self.finalbody
+
+    def block_range(self, lineno: int) -> tuple[int, int]:
+        """Get a range from a given line number to where this node ends."""
+        for exhandler in self.handlers:
+            if exhandler.type and lineno == exhandler.type.fromlineno:
+                return lineno, exhandler.tolineno
+            if exhandler.body[0].fromlineno <= lineno <= exhandler.body[-1].tolineno:
+                return lineno, exhandler.body[-1].tolineno
+        if self.finalbody:
+            if self.finalbody[0].fromlineno - 1 == lineno:
+                return lineno, self.finalbody[0].tolineno
+            if self.finalbody[0].fromlineno <= lineno <= self.finalbody[-1].tolineno:
+                return lineno, self.finalbody[-1].tolineno
+
+        # If not within any of the ExceptHandlers or `finally` body, fall back to regular
+        # handling of block_range for nodes with a potential `else` statement.
+        return super().block_range(lineno)
 
 
 class Tuple(BaseContainer):
@@ -4471,16 +4434,6 @@ class While(_base_nodes.MultiLineWithElseBlockNode, _base_nodes.Statement):
         :type: int
         """
         return self.test.tolineno
-
-    def block_range(self, lineno: int) -> tuple[int, int]:
-        """Get a range from the given line number to where this node ends.
-
-        :param lineno: The line number to start the range at.
-
-        :returns: The range of line numbers that this node belongs to,
-            starting at the given line number.
-        """
-        return self._elsed_block_range(lineno, self.orelse)
 
     def get_children(self):
         yield self.test
